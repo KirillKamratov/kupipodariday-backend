@@ -83,9 +83,39 @@ export class UsersService {
     return user;
   }
 
-  async update(id: number, updateUserDto: UpdateUserDto): Promise<User> {
-    await this.userRepository.update(id, updateUserDto);
-    return this.findOne(id);
+  async update(
+    id: number,
+    updateUserDto: UpdateUserDto,
+    createUserDto: CreateUserDto,
+  ) {
+    const isUsernameAlreadyExist = await this.findUserByCredentials(
+      createUserDto.username,
+    );
+    if (isUsernameAlreadyExist) {
+      throw new ForbiddenException(
+        `Имя пользователя ${createUserDto.username} уже используется`,
+      );
+    }
+    const isEmailAlreadyExists = await this.findUserByCredentials(
+      createUserDto.email,
+    );
+    if (isEmailAlreadyExists)
+      throw new ForbiddenException(
+        `Пользователь с таким эмейлом - ${createUserDto.email} уже зарегистрирован`,
+      );
+    if (updateUserDto.password) {
+      const hashPassword = await bcrypt.hash(updateUserDto.password, 10);
+      return await this.userRepository.update(id, {
+        ...updateUserDto,
+        password: hashPassword,
+        updatedAt: new Date(),
+      });
+    } else {
+      return await this.userRepository.update(id, {
+        ...updateUserDto,
+        updatedAt: new Date(),
+      });
+    }
   }
 
   async remove(id: number) {
