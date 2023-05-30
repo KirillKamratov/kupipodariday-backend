@@ -1,15 +1,15 @@
 import {
   ForbiddenException,
   Injectable,
-  NotFoundException,
+  InternalServerErrorException,
 } from '@nestjs/common';
 import { CreateOfferDto } from './dto/create-offer.dto';
 import { UpdateOfferDto } from './dto/update-offer.dto';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Offer } from './entities/offer.entity';
-import { Repository } from 'typeorm';
-import { User } from '../users/entities/user.entity';
+import { DataSource, Repository } from 'typeorm';
 import { WishesService } from '../wishes/wishes.service';
+import { Wish } from '../wishes/entities/wish.entity';
 
 @Injectable()
 export class OffersService {
@@ -17,21 +17,49 @@ export class OffersService {
     @InjectRepository(Offer)
     private offerRepository: Repository<Offer>,
     private wishesService: WishesService,
+    private wishesRepository: Repository<Wish>,
+    private readonly dataSource: DataSource,
   ) {}
-  async create(createOfferDto: CreateOfferDto, user: User) {
-    const id = createOfferDto.itemId;
-    const wish = await this.wishesService.findOne(id);
-    if (user.id === wish.owner.id) {
-      throw new NotFoundException(
+  async create(createOfferDto: CreateOfferDto, userId: number) {
+    const { amount, itemId } = createOfferDto;
+    const wish = await this.wishesRepository.findOne({
+      where: { id: itemId },
+      relations: ['owner'],
+    });
+    const { price, raised, owner } = wish;
+    if (owner.id === userId) {
+      throw new ForbiddenException(
         'Вы не можете вносить деньги на собственные подарки',
       );
     }
-    if (createOfferDto.amount + wish.raised > wish.price) {
+    if (amount + raised > price) {
       throw new ForbiddenException(
-        'Сумма взноса превышает сумму остатка стоимости подарка',
+        `Сумма взноса превышает сумму остатка стоимости подарка: ${
+          price - raised
+        } руб.`,
       );
     }
-    return this.offerRepository.save(createOfferDto);
+    const offer = this.offerRepository.create({
+      ...createOfferDto,
+      user: { id: userId },
+      item: { id: itemId },
+    });
+    const queryRunner = this.dataSource.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
+    try {
+      await queryRunner.manager.insert<Offer>(Offer, offer);
+      await queryRunner.manager.update<Wish>(Wish, itemId, {
+        raised: raised + amount,
+      });
+      await queryRunner.commitTransaction();
+    } catch {
+      await queryRunner.rollbackTransaction();
+      throw new InternalServerErrorException();
+    } finally {
+      await queryRunner.release();
+    }
+    return {};
   }
 
   async findAll(): Promise<Offer[]> {

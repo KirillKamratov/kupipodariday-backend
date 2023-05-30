@@ -59,6 +59,11 @@ export class WishesService {
         throw new ForbiddenException('Подарок уже скопирован!');
       }
     }
+    if (updateWishDto.price && wish.raised > 0) {
+      throw new ForbiddenException(
+        'Вы не можете изменять стоимость подарка, если уже есть желающие скинуться',
+      );
+    }
     return await this.wishRepository.update(id, {
       ...updateWishDto,
     });
