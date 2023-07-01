@@ -1,26 +1,47 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
-import { UsersService } from '../users/users.service';
+import { UsersService } from 'src/users/users.service';
 import { User } from '../users/entities/user.entity';
-
+import * as bcrypt from 'bcrypt';
+import { CreateUserDto } from 'src/users/dto/create-user.dto';
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+require('dotenv').config();
 @Injectable()
 export class AuthService {
   constructor(
     private jwtService: JwtService,
     private userService: UsersService,
   ) {}
+
   auth(user: User) {
     const payload = { sub: user.id };
-    return { access_token: this.jwtService.sign(payload) };
+    return {
+      access_token: this.jwtService.sign(payload, {
+        expiresIn: '7d',
+      }),
+    };
   }
 
-  async validatePassword(userName: string) {
-    const user = await this.userService.findUserByName(userName);
-
-    if (user && user.password) {
-      const { password, ...result } = user;
-      return user;
+  async validatePassword(username: string, password: string) {
+    const checkedUser = await this.userService.findByUsername(username);
+    if (!checkedUser) {
+      throw new UnauthorizedException('Неверный логин');
     }
-    return null;
+    const checkPassword = await bcrypt
+      .compare(password, checkedUser.password)
+      .then((matched) => {
+        if (!matched) {
+          return null;
+        } else return true;
+      });
+    if (!checkPassword) {
+      throw new UnauthorizedException('Неправильный пароль');
+    }
+    return checkedUser;
+  }
+
+  async signup(createUserDto: CreateUserDto) {
+    const user = await this.userService.create(createUserDto);
+    return user;
   }
 }

@@ -1,30 +1,24 @@
 import {
-  IsArray,
   IsString,
+  Length,
+  IsArray,
+  IsOptional,
   IsUrl,
   MaxLength,
-  MinLength,
 } from 'class-validator';
 
 export class CreateWishlistDto {
+  @Length(1, 250)
   @IsString()
-  @MinLength(1, {
-    message: 'Минимальная длина поля - 1 символ',
-  })
-  @MaxLength(250, {
-    message: 'Максимальная длина поля - 250 символов',
-  })
   name: string;
 
   @IsUrl()
-  image?: string;
+  image: string;
 
-  @IsString()
-  @MaxLength(1500, {
-    message: 'Максимальная длина поля - 1500 символов',
-  })
+  @MaxLength(1500)
+  @IsOptional()
   description: string;
 
   @IsArray()
-  items?: number[];
+  itemsId: number[];
 }

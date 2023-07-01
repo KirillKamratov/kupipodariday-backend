@@ -1,87 +1,85 @@
 import {
-  ForbiddenException,
   Injectable,
-  InternalServerErrorException,
+  NotFoundException,
+  ForbiddenException,
 } from '@nestjs/common';
 import { CreateOfferDto } from './dto/create-offer.dto';
-import { UpdateOfferDto } from './dto/update-offer.dto';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Offer } from './entities/offer.entity';
-import { DataSource, Repository } from 'typeorm';
 import { WishesService } from '../wishes/wishes.service';
-import { Wish } from '../wishes/entities/wish.entity';
+import { Offer } from './entities/offer.entity';
+import {
+  DataSource,
+  FindManyOptions,
+  FindOneOptions,
+  Repository,
+} from 'typeorm';
+import { Wish } from 'src/wishes/entities/wish.entity';
 
 @Injectable()
 export class OffersService {
   constructor(
+    private dataSource: DataSource,
     @InjectRepository(Offer)
     private offerRepository: Repository<Offer>,
     private wishesService: WishesService,
-    private wishesRepository: Repository<Wish>,
-    private readonly dataSource: DataSource,
   ) {}
+
   async create(createOfferDto: CreateOfferDto, userId: number) {
     const { amount, itemId } = createOfferDto;
-    const wish = await this.wishesRepository.findOne({
+    const wish = await this.wishesService.findOne({
       where: { id: itemId },
       relations: ['owner'],
     });
     const { price, raised, owner } = wish;
+
     if (owner.id === userId) {
-      throw new ForbiddenException(
-        'Вы не можете вносить деньги на собственные подарки',
-      );
+      throw new ForbiddenException('Нельзя скидываться на свои подарки');
     }
+
     if (amount + raised > price) {
-      throw new ForbiddenException(
-        `Сумма взноса превышает сумму остатка стоимости подарка: ${
-          price - raised
-        } руб.`,
-      );
+      throw new ForbiddenException('Сумма превышает остаток');
     }
+
     const offer = this.offerRepository.create({
       ...createOfferDto,
       user: { id: userId },
       item: { id: itemId },
     });
-    const queryRunner = this.dataSource.createQueryRunner();
-    await queryRunner.connect();
-    await queryRunner.startTransaction();
-    try {
-      await queryRunner.manager.insert<Offer>(Offer, offer);
-      await queryRunner.manager.update<Wish>(Wish, itemId, {
+
+    await this.dataSource.transaction(async (transactionalEntityManager) => {
+      await transactionalEntityManager.insert<Offer>(Offer, offer);
+      await transactionalEntityManager.update<Wish>(Wish, itemId, {
         raised: raised + amount,
       });
-      await queryRunner.commitTransaction();
-    } catch {
-      await queryRunner.rollbackTransaction();
-      throw new InternalServerErrorException();
-    } finally {
-      await queryRunner.release();
-    }
+    });
+
     return {};
   }
 
-  async findAll(): Promise<Offer[]> {
-    return this.offerRepository.find();
+  findMany(query: FindManyOptions<Offer>) {
+    return this.offerRepository.find(query);
   }
 
-  async findOne(id: number): Promise<Offer> {
-    return this.offerRepository.findOne({
-      where: {
-        id: id,
+  findOne(query: FindOneOptions<Offer>) {
+    return this.offerRepository.findOne(query);
+  }
+
+  getOffers() {
+    return this.findMany({
+      relations: {
+        item: { owner: true },
+        user: { wishes: true, offers: true },
       },
     });
   }
 
-  async update(id: number, updateOfferDto: UpdateOfferDto): Promise<Offer> {
-    await this.offerRepository.update(id, updateOfferDto);
-    return this.findOne(id);
-  }
-
-  async remove(id: number) {
-    const offer = await this.findOne(id);
-    await this.offerRepository.delete(id);
-    return offer;
+  getById(id: number) {
+    return this.findOne({
+      where: { id },
+      relations: {
+        item: { owner: true },
+        user: { wishes: true, offers: true },
+      },
+    });
   }
 }

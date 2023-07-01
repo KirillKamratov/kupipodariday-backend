@@ -1,75 +1,79 @@
-import { ForbiddenException, Injectable } from '@nestjs/common';
+import { Injectable, ForbiddenException } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
 import { CreateWishlistDto } from './dto/create-wishlist.dto';
 import { UpdateWishlistDto } from './dto/update-wishlist.dto';
-import { InjectRepository } from '@nestjs/typeorm';
 import { Wishlist } from './entities/wishlist.entity';
-import { Repository } from 'typeorm';
-import { WishesService } from '../wishes/wishes.service';
-import { User } from '../users/entities/user.entity';
+import { FindManyOptions, FindOneOptions, Repository } from 'typeorm';
 
 @Injectable()
 export class WishlistsService {
   constructor(
     @InjectRepository(Wishlist)
-    private WishListRepository: Repository<Wishlist>,
-    private wishesService: WishesService,
+    private wishlistsRepository: Repository<Wishlist>,
   ) {}
 
-  async create(createWishListDto: CreateWishlistDto, user: User) {
-    const wishToAdd = await this.wishesService.findWishList(
-      createWishListDto.items,
-    );
-    await this.WishListRepository.save({
-      ...createWishListDto,
-      owner: user,
-      items: wishToAdd,
+  findMany(query: FindManyOptions<Wishlist>) {
+    return this.wishlistsRepository.find(query);
+  }
+
+  findOne(query: FindOneOptions<Wishlist>) {
+    return this.wishlistsRepository.findOne(query);
+  }
+
+  findWishlists() {
+    return this.findMany({
+      relations: ['items', 'owner'],
     });
   }
 
-  async findAll(): Promise<Wishlist[]> {
-    return this.WishListRepository.find();
+  create(createWishlistDto: CreateWishlistDto, ownerId: number) {
+    const { itemsId, ...rest } = createWishlistDto;
+    const items = itemsId.map((id) => ({ id }));
+    const wishList = this.wishlistsRepository.create({
+      ...rest,
+      items,
+      owner: { id: ownerId },
+    });
+    return this.wishlistsRepository.save(wishList);
   }
 
-  async findOne(id: number): Promise<Wishlist> {
-    return this.WishListRepository.findOne({
-      where: {
-        id: id,
-      },
+  findById(id: number) {
+    return this.findOne({
+      where: { id },
+      relations: ['items', 'owner'],
     });
   }
 
   async update(
     id: number,
-    number: number,
     updateWishlistDto: UpdateWishlistDto,
-    user: User,
+    userId: number,
   ) {
-    const wishListToUpdate = await this.WishListRepository.findOneBy({ id });
-    const wishes = await this.wishesService.findWishList(
-      updateWishlistDto.items,
-    );
-    const wishList = await this.findOne(id);
-    if (wishList.owner.id !== user.id)
-      throw new ForbiddenException(
-        'Вы не можете редактировать чужие списки подарков!',
-      );
-    return await this.WishListRepository.save({
-      ...wishListToUpdate,
-      name: updateWishlistDto.name,
-      image: updateWishlistDto.image,
-      description: updateWishlistDto.description,
-      items: wishes,
+    const wishlist = await this.findOne({
+      where: { id },
+      relations: { owner: true },
     });
-  }
 
-  async remove(id: number, user: User) {
-    const wishList = await this.findOne(id);
-    if (wishList.owner.id !== user.id) {
+    if (wishlist.owner.id !== userId) {
       throw new ForbiddenException(
-        'Вы не можете удалять чужие списки подарков!',
+        'Вы не можете редактировать чужие списки подарков',
       );
     }
-    await this.WishListRepository.delete(id);
-    return wishList;
+    const { itemsId, ...rest } = updateWishlistDto;
+    const items = itemsId.map((id) => ({ id }));
+    const updatedWishlist = { ...rest, items };
+    await this.wishlistsRepository.update(id, updatedWishlist);
+    return this.findOne({ where: { id } });
+  }
+
+  async remove(userId: number, wishlistId: number) {
+    const wishlist = await this.findById(wishlistId);
+    if (userId !== wishlist.owner.id) {
+      throw new ForbiddenException(
+        'Удалять можно только свои подборки подарков',
+      );
+    }
+    await this.wishlistsRepository.delete(wishlistId);
+    return wishlist;
   }
 }
